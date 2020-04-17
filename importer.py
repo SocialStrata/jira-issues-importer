@@ -43,6 +43,7 @@ class Importer:
         'https://hub.socialstrata.com/jira/browse/WS' + r'-(\d+)': r'https://github.com/SocialStrata/web-sites/issues/\1',
         'WS' + r'-(\d+)': r'https://github.com/SocialStrata/web-sites/issues/\1'
     }
+    self.long_comments_to_create = []
     
   def import_milestones(self):
     """
@@ -62,8 +63,8 @@ class Importer:
           print mkey
         else:
           if r.status_code == 422: # already exists
-            ms = requests.get(milestone_url + '?state=open', timeout=Importer._DEFAULT_TIME_OUT).json()
-            ms += requests.get(milestone_url + '?state=closed', timeout=Importer._DEFAULT_TIME_OUT).json()
+            ms = requests.get(milestone_url + '?state=open', headers=self.headers, timeout=Importer._DEFAULT_TIME_OUT).json()
+            ms += requests.get(milestone_url + '?state=closed', headers=self.headers, timeout=Importer._DEFAULT_TIME_OUT).json()
             f = False
             for m in ms:
               if m['title'] == mkey:
@@ -117,7 +118,7 @@ class Importer:
         comments = []
         for comment in issue_comments:
           comments.append(dict((k,self._replace_jira_with_github_id(v)) for k,v in comment.items()))
-         
+
         self.import_issue_with_comments(issue, comments)
 
   def import_issue_with_comments(self, issue, comments):
@@ -131,6 +132,10 @@ class Importer:
     Then GitHub is pulled in a loop until the issue import is completed.
     Finally the issue github is noted.    
     """
+
+    # bl: reset the array in case we have extra comments we need to create
+    self.long_comments_to_create = []
+
     print 'Issue ', issue['key']
     jira_key = issue['key']
     del issue['key']
@@ -158,13 +163,17 @@ class Importer:
         return
     issue['githubid'] = gh_issue_id
     #print "\nGithub issue id: ", gh_issue_id
+
+    # bl: now manually create any one-off comments
+    for long_comment in self.long_comments_to_create:
+        self.upload_long_issue_comment(gh_issue_id, long_comment)
     
   def upload_github_issue(self, issue, comments, headers):
       """
       Uploads a single issue to GitHub asynchronously with the Issue Import API.
       """
       issue_url = self.github_url + '/import/issues'
-      issue_data = {'issue': issue, 'comments': comments}
+      issue_data = self.trim_long_issue_comments(issue, comments)
 
       # print json.dumps(issue_data, indent=2, sort_keys=True)
       response = requests.post(issue_url, json=issue_data, headers=headers, timeout=Importer._DEFAULT_TIME_OUT)
@@ -212,7 +221,62 @@ class Importer:
               .format(status)
           )
       return response
-        
+
+  def trim_long_issue_comments(self, issue, comments):
+      while True:
+          issue_data = {'issue': issue, 'comments': comments}
+          # bl: loop through comments, removing the largest comment until we get under the size or we have no more comments.
+          # if we are out of comments and the size is still too large, we have a problem...
+          if len(json.dumps(issue_data)) <= 1048576 or len(comments) == 0:
+              break
+          # bl: remove the largest comment from the array and continue! we'll append the comment at the end of the issue as a new comment instead
+          self.remove_largest_comment(comments)
+
+      return issue_data
+
+  def remove_largest_comment(self, comments):
+      max_comment_len = 0
+      comment_to_remove = None
+      for i in range(len(comments)):
+          comment = comments[i]
+          comment_len = len(json.dumps(comment))
+          if comment_len > max_comment_len:
+              comment_to_remove = i
+              max_comment_len = comment_len
+
+      removed_comment = comments[comment_to_remove]
+      del comments[comment_to_remove]
+      self.long_comments_to_create.append(removed_comment)
+      print 'Removed largest comment'
+
+  def upload_long_issue_comment(self, gh_issue_id, comment):
+      issue_comment_url = self.github_url + '/issues/' + str(gh_issue_id) + '/comments'
+
+      headers = self.headers
+      headers['Content-Type'] = 'application/json'
+
+      body = comment['body']
+      # bl: prepend the original comment date since it's going to be lost
+      # bl: comments can be at most 65,536 characters. reduce by 100 so we can add the prefix for each chunk
+      n = 65436
+      # bl: split the long comment into multiple comments so that no data is lost
+      chunks = [body[i:i+n] for i in range(0, len(body), n)]
+      chunk_len = len(chunks)
+      for i in range(chunk_len):
+          chunk = chunks[i]
+          if i == 0:
+              chunk = '<i>originally posted at ' + comment['created_at'] + '</i>\n' + chunk
+          if chunk_len > 1:
+              chunk = '<i>chunk ' + str(i + 1) + ' of ' + str(chunk_len + 1) + '</i>\n' + chunk
+          new_comment = {'body': chunk}
+
+          response = requests.post(issue_comment_url, json=new_comment, headers=headers, timeout=Importer._DEFAULT_TIME_OUT)
+          if response.status_code != 201:
+              raise RuntimeError(
+                  "Failed to post issue comment {} due to unexpected HTTP status code: {} ; text: {}".format(issue_comment_url, response.status_code, response.text)
+              )
+      print 'Created {} comments for long comment in issue #{}'.format(len(chunks), gh_issue_id)
+
   def convert_relationships_to_comments(self, issue):
     duplicates = issue['duplicates']
     is_duplicated_by = issue['is-duplicated-by']
