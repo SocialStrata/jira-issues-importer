@@ -77,7 +77,7 @@ class Project:
 
     self._project['Issues'].append({"title": item.title.text[item.title.text.index("]") + 2:len(item.title.text)],
       'key': item.key.text,
-      "body": self._htmlentitydecode(item.description.text) + '\n<i>JIRA link - ' + '<a href=\"https://issues.apache.org/jira/browse/'+ item.key +'\">' + item.title.text[0:item.title.text.index("]") + 1] + '</a>' + ' created by ' + item.reporter.get('username') + '</i>',
+      "body": '<i>created by ' + item.reporter.get('username') + '</i>\n' + self._htmlentitydecode(item.description.text),
       'created_at': self._convert_to_iso(item.created.text),
       'closed_at': closed_at,
       'updated_at': self._convert_to_iso(item.updated.text),
@@ -86,6 +86,13 @@ class Project:
       'comments': [],
       'duplicates': [],
       'is-duplicated-by': [],
+      'requires': [],
+      'is-required-by': [],
+      'caused': [],
+      'is-caused-by': [],
+      'incorporates': [],
+      'is-incorporated-by': [],
+      'relates-to': [],
       'is-related-to': [],
       'depends-on': [],
       'blocks': []
@@ -123,7 +130,7 @@ class Project:
       for comment in item.comments.comment:
         self._project['Issues'][-1]['comments'].append(
           {"created_at": self._convert_to_iso(comment.get('created')),
-           "body": self._htmlentitydecode(comment.text) + '\n<i>by ' + comment.get('author') + '</i>'
+           "body": '<i>by ' + comment.get('author') + '</i>\n' + self._htmlentitydecode(comment.text)
           })
     except AttributeError:
       pass

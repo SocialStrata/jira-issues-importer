@@ -15,23 +15,21 @@ def read_xml_sourcefile(file_name):
 #us = raw_input('GitHub account name: ')
 #repo = raw_input('GitHub project name: ')
 #user = raw_input('GitHub username: ')
-#pw = getpass.getpass('GitHub password: ')
 #token = raw_input('GitHub token: ')
 
-file_name = "export.xml"
-jiraProj = "LUCENENET"
-us = "bongohrtech"
-repo = "lucenenet"
-user = "bongohrtech"
-pw = "****"
-token = "ACCESS_TOKEN"
+file_name = "eve.xml"
+jiraProj = "EVE"
+us = "SocialStrata"
+repo = "eve"
+user = "brianlenz"
+token = ""
 
 #purge flag
-purge_before_import = "true"
+purge_before_import = "false"
 
 all_xml = read_xml_sourcefile(file_name)
-Options = namedtuple("Options", "user passwd account repo token")
-opts = Options(user=user, passwd=pw, account=us, repo=repo, token=token)
+Options = namedtuple("Options", "user account repo token")
+opts = Options(user=user, account=us, repo=repo, token=token)
 
 project = Project(jiraProj)
 

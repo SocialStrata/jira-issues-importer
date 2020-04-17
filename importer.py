@@ -8,8 +8,6 @@ import json
 
 
 class Importer:
-  _GITHUB_ISSUE_PREFIX = "GH-"
-  
   _PLACEHOLDER_PREFIX = "@PSTART"
   
   _PLACEHOLDER_SUFFIX = "@PEND"
@@ -25,9 +23,26 @@ class Importer:
     self.project = project
     self.github_url = 'https://api.github.com/repos/' + self.options.account + '/' + self.options.repo
     self.githubGQL_url = 'https://api.github.com/graphql'
-    self.jira_issue_replace_patterns = {'https://java.net/jira/browse/' + self.project.name + r'-(\d+)': r'\1',
-                                       self.project.name + r'-(\d+)': Importer._GITHUB_ISSUE_PREFIX + r'\1',
-                                       r'Issue (\d+)': Importer._GITHUB_ISSUE_PREFIX + r'\1'}
+    self.jira_issue_replace_patterns = {
+        'https://hub.socialstrata.com/jira/browse/' + self.project.name + r'-(\d+)': r'\1',
+        self.project.name + r'-(\d+)': r'\1'
+    }
+    self.jira_issue_url_replace_patterns = {
+        'https://hub.socialstrata.com/jira/browse/CRST' + r'-(\d+)': r'https://github.com/SocialStrata/crowdstack/issues/\1',
+        'CRST' + r'-(\d+)': r'https://github.com/SocialStrata/crowdstack/issues/\1',
+        'https://hub.socialstrata.com/jira/browse/HLA' + r'-(\d+)': r'https://github.com/SocialStrata/crowdstack/issues/\1',
+        'HLA' + r'-(\d+)': r'https://github.com/SocialStrata/crowdstack/issues/\1',
+        'https://hub.socialstrata.com/jira/browse/OPS' + r'-(\d+)': r'https://github.com/SocialStrata/operations/issues/\1',
+        'OPS' + r'-(\d+)': r'https://github.com/SocialStrata/operations/issues/\1',
+        'https://hub.socialstrata.com/jira/browse/RS' + r'-(\d+)': r'https://github.com/SocialStrata/right-starts/issues/\1',
+        'RS' + r'-(\d+)': r'https://github.com/SocialStrata/right-starts/issues/\1',
+        'https://hub.socialstrata.com/jira/browse/EVE' + r'-(\d+)': r'https://github.com/SocialStrata/eve/issues/\1',
+        'EVE' + r'-(\d+)': r'https://github.com/SocialStrata/eve/issues/\1',
+        'https://hub.socialstrata.com/jira/browse/HDO' + r'-(\d+)': r'https://github.com/SocialStrata/hoodo/issues/\1',
+        'HDO' + r'-(\d+)': r'https://github.com/SocialStrata/hoodo/issues/\1',
+        'https://hub.socialstrata.com/jira/browse/WS' + r'-(\d+)': r'https://github.com/SocialStrata/web-sites/issues/\1',
+        'WS' + r'-(\d+)': r'https://github.com/SocialStrata/web-sites/issues/\1'
+    }
     
   def import_milestones(self):
     """
@@ -95,7 +110,8 @@ class Importer:
 
 
         self.convert_relationships_to_comments(issue)
-          
+
+        issue['body'] = self._replace_jira_with_github_id(issue['body'])
         issue_comments = issue['comments']
         del issue['comments']
         comments = []
@@ -116,7 +132,7 @@ class Importer:
     Finally the issue github is noted.    
     """
     print 'Issue ', issue['key']
-    jiraKey = issue['key']
+    jira_key = issue['key']
     del issue['key']
     headers = self.headers
     headers['Accept'] = 'application/vnd.github.golden-comet-preview+json'
@@ -124,9 +140,24 @@ class Importer:
     status_url = response.json()['url']
     gh_issue_url = self.wait_for_issue_creation(status_url, headers).json()['issue_url']
     gh_issue_id = int(gh_issue_url.split('/')[-1])
+    jira_num = int(jira_key.split("-",1)[1])
+    issue['key'] = jira_key
+    if jira_num != gh_issue_id:
+        print 'Failed creating JIRA issue ' + str(jira_key) + '. Created #' + str(gh_issue_id) + '. Trying again!'
+        #  bl: if the issue wasn't created with the right ID, try again. probably a deleted/skipped issue.
+        get_issue_url = self.github_url + '/issues/' + str(gh_issue_id)
+        response = requests.get(get_issue_url, headers=self.headers, timeout=Importer._DEFAULT_TIME_OUT)
+        if response.status_code != 200:
+            raise RuntimeError(
+                "Failed to get an issue we just created! unexpected HTTP status code: {}".format(response.status_code)
+            )
+
+        issue_json = response.json()
+        self.delete_issue(str(issue_json['node_id']))
+        self.import_issue_with_comments(issue, comments)
+        return
     issue['githubid'] = gh_issue_id
     #print "\nGithub issue id: ", gh_issue_id
-    issue['key'] = jiraKey
     
   def upload_github_issue(self, issue, comments, headers):
       """
@@ -134,8 +165,8 @@ class Importer:
       """
       issue_url = self.github_url + '/import/issues'
       issue_data = {'issue': issue, 'comments': comments}
-      
-      print json.dumps(issue_data, indent=2, sort_keys=True)
+
+      # print json.dumps(issue_data, indent=2, sort_keys=True)
       response = requests.post(issue_url, json=issue_data, headers=headers, timeout=Importer._DEFAULT_TIME_OUT)
       if response.status_code == 202:
           return response
@@ -185,36 +216,80 @@ class Importer:
   def convert_relationships_to_comments(self, issue):
     duplicates = issue['duplicates']
     is_duplicated_by = issue['is-duplicated-by']
-    relates_to = issue['is-related-to']
+    requires = issue['requires']
+    is_required_by = issue['is-required-by']
+    caused = issue['caused']
+    is_caused_by = issue['is-caused-by']
+    incorporates = issue['incorporates']
+    is_incorporateed_by = issue['is-incorporated-by']
+    relates_to = issue['relates-to']
+    is_related_to = issue['is-related-to']
     depends_on = issue['depends-on']
     blocks = issue['blocks']
 
     for duplicate_item in duplicates:
-      issue['comments'].append({"body": "Duplicates: " + self._replace_jira_with_github_id(duplicate_item)})
+      self._add_link_to_issue(issue, "Duplicates: " + self._replace_jira_with_github_id(duplicate_item))
 
     for is_duplicated_by_item in is_duplicated_by:
-      issue['comments'].append({"body": "Is duplicated by: " + self._replace_jira_with_github_id(is_duplicated_by_item)})
+      self._add_link_to_issue(issue, "Is duplicated by: " + self._replace_jira_with_github_id(is_duplicated_by_item))
+
+    for require_item in requires:
+      self._add_link_to_issue(issue, "Requires: " + self._replace_jira_with_github_id(require_item))
+
+    for is_required_by_item in is_required_by:
+      self._add_link_to_issue(issue, "Is required by: " + self._replace_jira_with_github_id(is_required_by_item))
+
+    for caused_item in caused:
+      self._add_link_to_issue(issue, "Caused: " + self._replace_jira_with_github_id(caused_item))
+
+    for is_caused_by_item in is_caused_by:
+      self._add_link_to_issue(issue, "Is caused by: " + self._replace_jira_with_github_id(is_caused_by_item))
+
+    for incorporates_item in incorporates:
+      self._add_link_to_issue(issue, "Caused: " + self._replace_jira_with_github_id(incorporates_item))
+
+    for is_incorporated_by_item in is_incorporateed_by:
+      self._add_link_to_issue(issue, "Is caused by: " + self._replace_jira_with_github_id(is_incorporated_by_item))
 
     for relates_to_item in relates_to:
-      issue['comments'].append({"body": "Is related to: " + self._replace_jira_with_github_id(relates_to_item)})
+      self._add_link_to_issue(issue, "Relates to: " + self._replace_jira_with_github_id(relates_to_item))
+
+    for is_related_to_item in is_related_to:
+      self._add_link_to_issue(issue, "Is related to: " + self._replace_jira_with_github_id(is_related_to_item))
 
     for depends_on_item in depends_on:
-      issue['comments'].append({"body": "Depends on: " + self._replace_jira_with_github_id(depends_on_item)})
+      self._add_link_to_issue(issue, "Depends on: " + self._replace_jira_with_github_id(depends_on_item))
 
     for blocks_item in blocks:
-      issue['comments'].append({"body": "Blocks: " + self._replace_jira_with_github_id(blocks_item)})
+      self._add_link_to_issue(issue, "Blocks: " + self._replace_jira_with_github_id(blocks_item))
 
     del issue['duplicates']
     del issue['is-duplicated-by']
+    del issue['requires']
+    del issue['is-required-by']
+    del issue['caused']
+    del issue['is-caused-by']
+    del issue['incorporates']
+    del issue['is-incorporated-by']
+    del issue['relates-to']
     del issue['is-related-to']
     del issue['depends-on']
     del issue['blocks']
-      
+
+  def _add_link_to_issue(self, issue, body):
+      issue['comments'].insert(0, {"created_at": issue["created_at"], "body": body})
+
+  def _replace_jira_urls_for_github(self, text):
+    result = text
+    for pattern, replacement in self.jira_issue_url_replace_patterns.iteritems():
+      result = re.sub(pattern, replacement, result)
+    return result
+
   def _replace_jira_with_github_id(self, text):
     result = text
     for pattern, replacement in self.jira_issue_replace_patterns.iteritems():
       result = re.sub(pattern, Importer._PLACEHOLDER_PREFIX + replacement + Importer._PLACEHOLDER_SUFFIX, result)
-    return result
+    return self._replace_jira_urls_for_github(result)
       
   def post_process_comments(self):
     """
@@ -244,7 +319,7 @@ class Importer:
     try:
       next_comments = response.links["next"]
       if next_comments:
-        next_url = next_comments['url'];
+        next_url = next_comments['url']
         self._post_process_comments(next_url)
     except KeyError:
       print 'no more pages for comments: '
@@ -253,11 +328,9 @@ class Importer:
         print(value)
 
   def _replace_github_id_placholder(self, text):
-    result = text;
-    pattern = Importer._PLACEHOLDER_PREFIX + Importer._GITHUB_ISSUE_PREFIX + r'(\d+)' + Importer._PLACEHOLDER_SUFFIX
-    result = re.sub(pattern, Importer._GITHUB_ISSUE_PREFIX + r'\1', result)
+    result = text
     pattern = Importer._PLACEHOLDER_PREFIX + r'(\d+)' + Importer._PLACEHOLDER_SUFFIX
-    result = re.sub(pattern, r'\1', result)
+    result = re.sub(pattern, r'#\1', result)
     return result
 
   def _patch_comment(self, url, body):
@@ -294,8 +367,6 @@ class Importer:
     }
     """
 
-    
-    e = "q {}"
     print 'query: {}'.format(q)
     response = requests.post(self.githubGQL_url, headers=headers, json={'query': q})
     if response.status_code != 200:
@@ -306,15 +377,23 @@ class Importer:
       data = response.json()
       
       for node in data['data']['search']['nodes'] :
-          d = """
-              mutation {   deleteIssue(input: {issueId: \"""" + node['id'] + """\"}) {     clientMutationId    repository {      id    }  }}
-              """
-          print 'query: {}'.format(d)
- 
-          response = requests.post(self.githubGQL_url, headers=headers, json={'query': d})
-          if response.status_code != 200:
-            raise RuntimeError(
-                  "Failed to get issues {} due to unexpected HTTP status code: {} ; text: {}".format(self.githubGQL_url, response.status_code, response.text)
-                )
-          else:
-            print response.json()
+          self.delete_issue_with_headers(node['id'], headers)
+
+  def delete_issue(self, id):
+    headers = self.headers
+    headers['Content-Type'] = 'application/json'
+    self.delete_issue_with_headers(id, headers)
+
+  def delete_issue_with_headers(self, id, headers):
+      d = """
+          mutation {   deleteIssue(input: {issueId: \"""" + id + """\"}) {     clientMutationId    repository {      id    }  }}
+          """
+      print 'query: {}'.format(d)
+
+      response = requests.post(self.githubGQL_url, headers=headers, json={'query': d})
+      if response.status_code != 200:
+        raise RuntimeError(
+              "Failed to get issues {} due to unexpected HTTP status code: {} ; text: {}".format(self.githubGQL_url, response.status_code, response.text)
+            )
+      else:
+        print response.json()
