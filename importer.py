@@ -173,10 +173,10 @@ class Importer:
       Uploads a single issue to GitHub asynchronously with the Issue Import API.
       """
       issue_url = self.github_url + '/import/issues'
-      issue_data = self.trim_long_issue_comments(issue, comments)
+      self.trim_long_issue_comments(issue, comments)
 
       # print json.dumps(issue_data, indent=2, sort_keys=True)
-      response = requests.post(issue_url, json=issue_data, headers=headers, timeout=Importer._DEFAULT_TIME_OUT)
+      response = requests.post(issue_url, json=self.issue_data, headers=headers, timeout=Importer._DEFAULT_TIME_OUT)
       if response.status_code == 202:
           return response
       elif response.status_code == 422:
@@ -197,20 +197,23 @@ class Importer:
       If the status is 'pending', it sleeps, then rechecks until the status is
       either 'imported' or 'failed'.
       """
+      i = 0
       while True:  # keep checking until status is something other than 'pending'
           response = requests.get(status_url, headers=headers, timeout=Importer._DEFAULT_TIME_OUT)
           if response.status_code != 200:
-              raise RuntimeError(
-                  "Failed to check GitHub issue import status url: {} due to unexpected HTTP status code: {}"
-                  .format(status_url, response.status_code)
-              )
-          status = response.json()['status']
-          if status != 'pending':
-              break
+              print "Failed to check GitHub issue import status url: {} due to unexpected HTTP status code: {}".format(status_url, response.status_code)
+              i = i+1
+              if i > 100:
+                  raise RuntimeError("Failing import status check permanently!")
+          else:
+              status = response.json()['status']
+              if status != 'pending':
+                  break
           time.sleep(1)
       if status == 'imported':
           print "Imported Issue:", response.json()['issue_url']
       elif status == 'failed':
+          print "Issue JSON: " + json.dumps(self.issue_data)
           raise RuntimeError(
               "Failed to import GitHub issue due to the following errors:\n{}"
               .format(response.json())
@@ -223,16 +226,22 @@ class Importer:
       return response
 
   def trim_long_issue_comments(self, issue, comments):
+      # bl: start by trimming any comment that has a body over 64KB in length since that's not allowed
+      # bl: to avoid indexing issues, work from the back of the list to the front
+      for i in range(len(comments)-1, -1, -1):
+          comment = comments[i]
+          comment_len = len(json.dumps(comment))
+          if comment_len > 65536:
+              self.remove_comment(comments, i)
+
       while True:
-          issue_data = {'issue': issue, 'comments': comments}
+          self.issue_data = {'issue': issue, 'comments': comments}
           # bl: loop through comments, removing the largest comment until we get under the size or we have no more comments.
           # if we are out of comments and the size is still too large, we have a problem...
-          if len(json.dumps(issue_data)) <= 1048576 or len(comments) == 0:
+          if len(json.dumps(self.issue_data)) <= 1048576 or len(comments) == 0:
               break
           # bl: remove the largest comment from the array and continue! we'll append the comment at the end of the issue as a new comment instead
           self.remove_largest_comment(comments)
-
-      return issue_data
 
   def remove_largest_comment(self, comments):
       max_comment_len = 0
@@ -243,11 +252,13 @@ class Importer:
           if comment_len > max_comment_len:
               comment_to_remove = i
               max_comment_len = comment_len
+      self.remove_comment(comments, comment_to_remove)
 
-      removed_comment = comments[comment_to_remove]
-      del comments[comment_to_remove]
+  def remove_comment(self, comments, i):
+      removed_comment = comments[i]
+      del comments[i]
       self.long_comments_to_create.append(removed_comment)
-      print 'Removed largest comment'
+      print 'Removed comment {}'.format(i)
 
   def upload_long_issue_comment(self, gh_issue_id, comment):
       issue_comment_url = self.github_url + '/issues/' + str(gh_issue_id) + '/comments'
