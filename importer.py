@@ -267,8 +267,9 @@ class Importer:
                   comment_to_strip_from = max(comment_to_strip_from, i)
               break
 
+      self.issue_data = {'issue': issue, 'comments': comments[0: comment_to_strip_from if comment_to_strip_from is not None else num_comments]}
+
       if comment_to_strip_from is not None:
-          self.issue_data = {'issue': issue, 'comments': comments[0:comment_to_strip_from]}
           self.remove_comments_from(comments, comment_to_strip_from)
 
   def remove_comments_from(self, comments, index):
