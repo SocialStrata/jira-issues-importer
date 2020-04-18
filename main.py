@@ -92,16 +92,14 @@ for project_config in project_configs:
 
     print 'Found {} issues for {}'.format(len(project.get_issues()), jira_proj)
 
-# bl: then, create the milestones and labels
-for importer in importers:
+    # bl: then, create the milestones and labels
     if purge_before_import == "true":
       importer.purge_existing_issues()
 
     importer.import_milestones()
     importer.import_labels()
 
-# bl: then, import all of the issues
-for importer in importers:
+    # bl: then, import all of the issues
     importer.import_issues()
 
 # bl: once we've processed everything, then we can process comments so that everything will be linked properly
