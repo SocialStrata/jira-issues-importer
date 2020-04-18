@@ -43,7 +43,7 @@ class Importer:
         'https://hub.socialstrata.com/jira/browse/WS' + r'-(\d+)': r'https://github.com/SocialStrata/web-sites/issues/\1',
         'WS' + r'-(\d+)': r'https://github.com/SocialStrata/web-sites/issues/\1'
     }
-    self.long_comments_to_create = []
+    self.comments_to_append = []
     
   def import_milestones(self):
     """
@@ -134,7 +134,7 @@ class Importer:
     """
 
     # bl: reset the array in case we have extra comments we need to create
-    self.long_comments_to_create = []
+    self.comments_to_append = []
 
     print 'Issue ', issue['key']
     jira_key = issue['key']
@@ -165,15 +165,16 @@ class Importer:
     #print "\nGithub issue id: ", gh_issue_id
 
     # bl: now manually create any one-off comments
-    for long_comment in self.long_comments_to_create:
-        self.upload_long_issue_comment(gh_issue_id, long_comment)
+    for long_comment in self.comments_to_append:
+        self.upload_extra_comment(gh_issue_id, issue, long_comment)
     
   def upload_github_issue(self, issue, comments, headers):
       """
       Uploads a single issue to GitHub asynchronously with the Issue Import API.
       """
       issue_url = self.github_url + '/import/issues'
-      self.trim_long_issue_comments(issue, comments)
+      self.trim_long_issue_body(issue, comments)
+      self.trim_payload_size(issue, comments)
 
       # print json.dumps(issue_data, indent=2, sort_keys=True)
       response = requests.post(issue_url, json=self.issue_data, headers=headers, timeout=Importer._DEFAULT_TIME_OUT)
@@ -225,42 +226,60 @@ class Importer:
           )
       return response
 
-  def trim_long_issue_comments(self, issue, comments):
+  def trim_long_issue_body(self, issue, comments):
+      body = issue['body']
+      body_len = len(body)
+      if body_len > 65536:
+          n = 65436
+          # bl: split the body into comments so that no data is lost
+          chunks = [body[i:i+n] for i in range(0, len(body), n)]
+          chunk_len = len(chunks)
+          for i in range(chunk_len):
+              chunk = chunks[i]
+              chunk = '<i>issue chunk ' + str(i + 1) + ' of ' + str(chunk_len) + '</i>\n' + chunk
+              # bl: the first chunk is the main issue body. the rest will be comments in order
+              if i == 0:
+                  issue['body'] = chunk
+              else:
+                  comments.insert(i-1, {'body': chunk, 'created_at': issue['created_at']})
+
+  def trim_payload_size(self, issue, comments):
+      # bl: find the lowest index of the comment that we need to remove and start inserting at the end. it will either be the first comment over 64KB
+      # or it might be the first comment that brings the total issue size under 1MB
       # bl: start by trimming any comment that has a body over 64KB in length since that's not allowed
-      # bl: to avoid indexing issues, work from the back of the list to the front
-      for i in range(len(comments)-1, -1, -1):
+      comment_to_strip_from = None
+      num_comments = len(comments)
+      for i in range(num_comments):
           comment = comments[i]
-          comment_len = len(json.dumps(comment))
+          comment_len = len(comment['body'])
           if comment_len > 65536:
-              self.remove_comment(comments, i)
-
-      while True:
-          self.issue_data = {'issue': issue, 'comments': comments}
-          # bl: loop through comments, removing the largest comment until we get under the size or we have no more comments.
-          # if we are out of comments and the size is still too large, we have a problem...
-          if len(json.dumps(self.issue_data)) <= 1048576 or len(comments) == 0:
+              comment_to_strip_from = i
               break
-          # bl: remove the largest comment from the array and continue! we'll append the comment at the end of the issue as a new comment instead
-          self.remove_largest_comment(comments)
 
-  def remove_largest_comment(self, comments):
-      max_comment_len = 0
-      comment_to_remove = None
-      for i in range(len(comments)):
-          comment = comments[i]
-          comment_len = len(json.dumps(comment))
-          if comment_len > max_comment_len:
-              comment_to_remove = i
-              max_comment_len = comment_len
-      self.remove_comment(comments, comment_to_remove)
+      # bl: work from the back forward until the issue_data body is less than 1MB
+      for i in range(num_comments, 0, -1):
+          self.issue_data = {'issue': issue, 'comments': comments[0:i]}
+          # bl: once the body is under 1MB, we are done
+          if len(json.dumps(self.issue_data)) <= 1048576:
+              if i < num_comments:
+                  comment_to_strip_from = max(comment_to_strip_from, i)
+              break
+
+      if comment_to_strip_from is not None:
+          self.remove_comments_from(comments, comment_to_strip_from)
+
+  def remove_comments_from(self, comments, i):
+      # bl: to avoid indexing issues, work from the back of the list to the front
+      for j in range(len(comments)-1, i-1, -1):
+          self.remove_comment(comments, j)
 
   def remove_comment(self, comments, i):
       removed_comment = comments[i]
       del comments[i]
-      self.long_comments_to_create.append(removed_comment)
+      self.comments_to_append.append(removed_comment)
       print 'Removed comment {}'.format(i)
 
-  def upload_long_issue_comment(self, gh_issue_id, comment):
+  def upload_extra_comment(self, gh_issue_id, issue, comment):
       issue_comment_url = self.github_url + '/issues/' + str(gh_issue_id) + '/comments'
 
       headers = self.headers
@@ -275,10 +294,12 @@ class Importer:
       chunk_len = len(chunks)
       for i in range(chunk_len):
           chunk = chunks[i]
-          if i == 0:
-              chunk = '<i>originally posted at ' + comment['created_at'] + '</i>\n' + chunk
-          if chunk_len > 1:
-              chunk = '<i>chunk ' + str(i + 1) + ' of ' + str(chunk_len + 1) + '</i>\n' + chunk
+          # bl: identify if this is a comment or an extension of the issue body by the post time
+          if issue['created_at'] != comment['created_at']:
+              if i == 0:
+                  chunk = '<i>originally posted at ' + comment['created_at'] + '</i>\n' + chunk
+              if chunk_len > 1:
+                  chunk = '<i>comment chunk ' + str(i + 1) + ' of ' + str(chunk_len) + '</i>\n' + chunk
           new_comment = {'body': chunk}
 
           response = requests.post(issue_comment_url, json=new_comment, headers=headers, timeout=Importer._DEFAULT_TIME_OUT)
