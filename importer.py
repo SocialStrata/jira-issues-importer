@@ -41,7 +41,9 @@ class Importer:
         'https://hub.socialstrata.com/jira/browse/HDO' + r'-(\d+)': r'https://github.com/SocialStrata/hoodo/issues/\1',
         'HDO' + r'-(\d+)': r'https://github.com/SocialStrata/hoodo/issues/\1',
         'https://hub.socialstrata.com/jira/browse/WS' + r'-(\d+)': r'https://github.com/SocialStrata/web-sites/issues/\1',
-        'WS' + r'-(\d+)': r'https://github.com/SocialStrata/web-sites/issues/\1'
+        'WS' + r'-(\d+)': r'https://github.com/SocialStrata/web-sites/issues/\1',
+        'https://hub.socialstrata.com/jira/browse/CS' + r'-(\d+)': r'https://github.com/SocialStrata/customer-service/issues/\1',
+        'CS' + r'-(\d+)': r'https://github.com/SocialStrata/customer-service/issues/\1'
     }
     self.comments_to_append = []
     
