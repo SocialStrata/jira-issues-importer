@@ -266,18 +266,16 @@ class Importer:
               break
 
       if comment_to_strip_from is not None:
+          self.issue_data = {'issue': issue, 'comments': comments[0:comment_to_strip_from]}
           self.remove_comments_from(comments, comment_to_strip_from)
 
-  def remove_comments_from(self, comments, i):
+  def remove_comments_from(self, comments, index):
       # bl: to avoid indexing issues, work from the back of the list to the front
-      for j in range(len(comments)-1, i-1, -1):
-          self.remove_comment(comments, j)
-
-  def remove_comment(self, comments, i):
-      removed_comment = comments[i]
-      del comments[i]
-      self.comments_to_append.append(removed_comment)
-      print 'Removed comment {}'.format(i)
+      for i in range(len(comments)-1, index-1, -1):
+          removed_comment = comments[i]
+          del comments[i]
+          self.comments_to_append.insert(0, removed_comment)
+          print 'Removed comment {}'.format(i)
 
   def upload_extra_comment(self, gh_issue_id, issue, comment):
       issue_comment_url = self.github_url + '/issues/' + str(gh_issue_id) + '/comments'
@@ -307,7 +305,7 @@ class Importer:
               raise RuntimeError(
                   "Failed to post issue comment {} due to unexpected HTTP status code: {} ; text: {}".format(issue_comment_url, response.status_code, response.text)
               )
-      print 'Created {} comments for long comment in issue #{}'.format(len(chunks), gh_issue_id)
+      print 'Appended {} comments for comment in issue #{}'.format(len(chunks), gh_issue_id)
 
   def convert_relationships_to_comments(self, issue):
     duplicates = issue['duplicates']
