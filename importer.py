@@ -264,7 +264,8 @@ class Importer:
           # bl: once the body is under 1MB, we are done
           if len(json.dumps(self.issue_data)) <= 1048576:
               if i < num_comments:
-                  comment_to_strip_from = max(comment_to_strip_from, i)
+                  # bl: strip from the earliest comment that we found to be a problem
+                  comment_to_strip_from = min(comment_to_strip_from, i)
               break
 
       self.issue_data = {'issue': issue, 'comments': comments[0: comment_to_strip_from if comment_to_strip_from is not None else num_comments]}
