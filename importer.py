@@ -393,8 +393,9 @@ class Importer:
     """
     Starts post-processing all issue comments.
     """
-    comment_url = self.github_url + '/issues/comments'
-    self._post_process_comments(comment_url) 
+    comment_url = self.github_url + '/issues/comments?page=962'
+    while comment_url is not None:
+        comment_url = self._post_process_comments(comment_url)
     
   def _post_process_comments(self, url):
     """
@@ -403,9 +404,11 @@ class Importer:
     print "listing comments using " + url
     response = requests.get(url, headers=self.headers, timeout=Importer._DEFAULT_TIME_OUT)
     if response.status_code != 200:
-        raise RuntimeError(
-            "Failed to list all comments due to unexpected HTTP status code: {}".format(response.status_code)
-        )
+        print "Failed to list all comments due to unexpected HTTP status code: {}".format(response.status_code)
+        print "Sleeping 10 seconds"
+        time.sleep(10)
+        self._post_process_comments(url)
+        return
       
     comments = response.json()
     for comment in comments:
@@ -413,17 +416,18 @@ class Importer:
       body = comment['body']
       if Importer._PLACEHOLDER_PREFIX in body:
         newbody = self._replace_github_id_placholder(body)
-        self._patch_comment(comment['url'], newbody)
+        self._patch_comment(comment['url'], newbody, 0)
     try:
       next_comments = response.links["next"]
       if next_comments:
-        next_url = next_comments['url']
-        self._post_process_comments(next_url)
+        return next_comments['url']
     except KeyError:
       print 'no more pages for comments: '
       for key, value in response.links.items():
         print(key)
         print(value)
+
+    return None
 
   def _replace_github_id_placholder(self, text):
     result = text
@@ -431,7 +435,7 @@ class Importer:
     result = re.sub(pattern, r'#\1', result)
     return result
 
-  def _patch_comment(self, url, body):
+  def _patch_comment(self, url, body, i):
     """
     Patches a single comment body of a Github issue.
     """
@@ -441,9 +445,11 @@ class Importer:
     # print patch_data
     response = requests.patch(url, json=patch_data, headers=self.headers, timeout=Importer._DEFAULT_TIME_OUT)
     if response.status_code != 200:
-        raise RuntimeError(
-            "Failed to patch comment {} due to unexpected HTTP status code: {} ; text: {}".format(url, response.status_code, response.text)
-        )
+        print "Failed to patch comment {} due to unexpected HTTP status code: {} ; text: {} ; full_response: {}".format(url, response.status_code, response.text, json.dumps(response))
+        time.sleep(3)
+        if i > 20:
+            raise RuntimeError("Failed 20 times. Quitting.")
+        self._patch_comment(url, body, i+1)
 
   def purge_existing_issues(self):
     print "Calling graphql api..."
