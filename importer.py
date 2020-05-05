@@ -22,6 +22,7 @@ class Importer:
                     }
     self.project = project
     self.github_url = 'https://api.github.com/repos/' + self.options.account + '/' + self.options.repo
+    self.github_web_url = 'https://github.com/' + self.options.account + '/' + self.options.repo
     self.githubGQL_url = 'https://api.github.com/graphql'
     self.jira_issue_replace_patterns = {
         'https://hub.socialstrata.com/jira/browse/' + self.project.name + r'-(\d+)': r'\1',
@@ -396,6 +397,28 @@ class Importer:
     comment_url = self.github_url + '/issues/comments?page=962'
     while comment_url is not None:
         comment_url = self._post_process_comments(comment_url)
+
+  def post_process_issue_comments(self, issue_id):
+    """
+    Starts post-processing all issue comments.
+    """
+    issue_url = self.github_url + '/issues/' + str(issue_id)
+    print "getting issue using " + issue_url
+    response = requests.get(issue_url, headers=self.headers, timeout=Importer._DEFAULT_TIME_OUT)
+    if response.status_code == 404 or response.status_code == 410:
+        print "Issue #{} doesn't exist (status code: {}). Skipping!".format(issue_id, response.status_code)
+        return
+    if response.status_code == 403:
+        print "Issue #{} error. Rate limit exceeded? (status code: {}). Sleeping a minute and trying again!".format(issue_id, response.status_code)
+        time.sleep(100)
+        self.post_process_issue_comments(issue_id)
+        return
+    issue = response.json()
+    self._patch_body(issue_url, issue['body'])
+
+    comment_url = issue_url + '/comments'
+    while comment_url is not None:
+        comment_url = self._post_process_comments(comment_url)
     
   def _post_process_comments(self, url):
     """
@@ -413,10 +436,7 @@ class Importer:
     comments = response.json()
     for comment in comments:
       # print "handling comment " + comment['url']
-      body = comment['body']
-      if Importer._PLACEHOLDER_PREFIX in body:
-        newbody = self._replace_github_id_placholder(body)
-        self._patch_comment(comment['url'], newbody, 0)
+      self._patch_body(comment['url'], comment['body'])
     try:
       next_comments = response.links["next"]
       if next_comments:
@@ -433,23 +453,46 @@ class Importer:
     result = text
     pattern = Importer._PLACEHOLDER_PREFIX + r'(\d+)' + Importer._PLACEHOLDER_SUFFIX
     result = re.sub(pattern, r'#\1', result)
+    result = re.sub(r'<a href=\"https://github\.com/SocialStrata/crowdstack/issues/[0-9]+(.*?)".*?>(<del>)?(#|TUR-|HLA-|https://github.com/SocialStrata/crowdstack/issues/|SocialStrata/crowdstack#)([0-9]+)(.*?)(</del>)?</a>', r'SocialStrata/crowdstack#\4', result)
+    result = re.sub(r'<a href=\"https://github\.com/SocialStrata/eve/issues/[0-9]+(.*?)".*?>(<del>)?(#|https://github.com/SocialStrata/eve/issues/)([0-9]+)(.*?)(</del>)?</a>', r'SocialStrata/eve#\4', result)
+    result = re.sub(r'<a href=\"https://github\.com/SocialStrata/operations/issues/[0-9]+(.*?)".*?>(<del>)?(#|https://github.com/SocialStrata/operations/issues/)([0-9]+)(.*?)(</del>)?</a>', r'SocialStrata/operations#\4', result)
+    result = re.sub(r'<a href=\"https://github\.com/SocialStrata/web-sites/issues/[0-9]+(.*?)".*?>(<del>)?(#|https://github.com/SocialStrata/web-sites/issues/)([0-9]+)(.*?)(</del>)?</a>', r'SocialStrata/web-sites#\4', result)
+    result = re.sub(r'<a href=\"https://github\.com/SocialStrata/right-starts/issues/[0-9]+(.*?)".*?>(<del>)?(#|https://github.com/SocialStrata/right-starts/issues/)([0-9]+)(.*?)(</del>)?</a>', r'SocialStrata/right-starts#\4', result)
+    result = re.sub(r'<a href=\"https://github\.com/SocialStrata/customer-service/issues/[0-9]+(.*?)".*?>(<del>)?(#|https://github.com/SocialStrata/customer-service/issues/)([0-9]+)(.*?)(</del>)?</a>', r'SocialStrata/customer-service#\4', result)
+    result = re.sub(r'<a href=\"https://github\.com/SocialStrata/hoodo/issues/[0-9]+(.*?)".*?>(<del>)?(#|https://github.com/SocialStrata/hoodo/issues/)([0-9]+)(.*?)(</del>)?</a>', r'SocialStrata/hoodo#\4', result)
+    result = re.sub(r'<a href=\"https://hub\.socialstrata\.com/jira/browse/#[0-9]+(.*?)".*?>(<del>)?(#|https://hub.socialstrata.com/jira/browse/#)([0-9]+)(.*?)(</del>)?</a>', r'#\4', result)
+    result = re.sub(r'<a href=\"https://hub\.socialstrata\.com/jira/browse/https://github\.com/SocialStrata/crowdstack/issues/[0-9]+(.*?)".*?>(<del>)?(#|TUR-|HLA-|https://github.com/SocialStrata/crowdstack/issues/)([0-9]+)(.*?)(</del>)?</a>', r'SocialStrata/crowdstack#\4', result)
+    result = re.sub(r'<a href=\"https://hub\.socialstrata\.com/jira/browse/https://github\.com/SocialStrata/eve/issues/[0-9]+(.*?)".*?>(<del>)?(#|TUR-|HLA-|https://github.com/SocialStrata/eve/issues/)([0-9]+)(.*?)(</del>)?</a>', r'SocialStrata/eve#\4', result)
+    result = re.sub(r'<a href=\"https://hub\.socialstrata\.com/jira/browse/#[0-9]+(.*?)".*?>(<del>)?(#|TUR-|HLA-)([0-9]+)(.*?)(</del>)?</a>', r'SocialStrata/crowdstack#\4', result)
+    # bl: replace old JIRA URLs with the GitHub counterpart
+    result = re.sub(r'>https://hub\.socialstrata\.com/jira/browse/(#[0-9]+)</a>', r'>\1</a>', result)
+    result = re.sub(r'(TUR|HLA)-([0-9]+)', r'SocialStrata/crowdstack#\2', result)
     return result
 
-  def _patch_comment(self, url, body, i):
+  def _patch_body(self, url, body):
+      original_body = body
+      body = self._replace_github_id_placholder(original_body)
+      if body == original_body:
+          return
+      print "Patching body: {}".format(original_body.encode("utf8"))
+      print "New body: {}".format(body.encode("utf8"))
+      self._patch_body_index(url, body, 0)
+
+  def _patch_body_index(self, url, body, i):
     """
-    Patches a single comment body of a Github issue.
+    Patches the body of a single Github issue or comment.
     """
-    print "patching comment " + url
+    print "patching body " + url
     # print "new body:" + body
     patch_data = {'body': body}
     # print patch_data
     response = requests.patch(url, json=patch_data, headers=self.headers, timeout=Importer._DEFAULT_TIME_OUT)
     if response.status_code != 200:
-        print "Failed to patch comment {} due to unexpected HTTP status code: {} ; text: {} ; full_response: {}".format(url, response.status_code, response.text, json.dumps(response))
+        print "Failed to patch body {} due to unexpected HTTP status code: {} ; text: {}".format(url, response.status_code, response.text)
         time.sleep(3)
         if i > 20:
             raise RuntimeError("Failed 20 times. Quitting.")
-        self._patch_comment(url, body, i+1)
+        self._patch_body_index(url, body, i+1)
 
   def purge_existing_issues(self):
     print "Calling graphql api..."

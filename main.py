@@ -25,37 +25,51 @@ project_configs = [
     {
         'jira_proj': 'CS',
         'repo': 'customer-service',
-        'files': ['cs.xml']
+        'files': ['cs.xml'],
+        'first_issue_id': 34,
+        'last_issue_id': 87
     },
     {
         'jira_proj': 'WS',
         'repo': 'web-sites',
-        'files': ['ws.xml']
+        'files': ['ws.xml'],
+        'first_issue_id': 1,
+        'last_issue_id': 104
     },
     {
         'jira_proj': 'RS',
         'repo': 'right-starts',
-        'files': ['rs.xml']
+        'files': ['rs.xml'],
+        'first_issue_id': 1,
+        'last_issue_id': 168
     },
     {
         'jira_proj': 'HDO',
         'repo': 'hoodo',
-        'files': ['hdo.xml']
+        'files': ['hdo.xml'],
+        'first_issue_id': 1,
+        'last_issue_id': 15
     },
     {
         'jira_proj': 'EVE',
         'repo': 'eve',
-        'files': ['eve1.xml', 'eve2.xml']
+        'files': ['eve1.xml', 'eve2.xml'],
+        'first_issue_id': 1,
+        'last_issue_id': 1285
     },
     {
         'jira_proj': 'OPS',
         'repo': 'operations',
-        'files': ['ops1.xml', 'ops2.xml', 'ops3.xml']
+        'files': ['ops1.xml', 'ops2.xml', 'ops3.xml'],
+        'first_issue_id': 1,
+        'last_issue_id': 2309
     },
     {
         'jira_proj': 'CRST',
         'repo': 'crowdstack',
-        'files': ['crst1.xml', 'crst2.xml', 'crst3.xml', 'crst4.xml', 'crst5.xml', 'crst6.xml', 'crst7.xml', 'crst8.xml', 'crst9.xml', 'crst10.xml', 'crst11.xml', 'crst12.xml', 'crst13.xml', 'crst14.xml', 'crst15.xml', 'crst16.xml', 'crst17.xml', 'crst18.xml']
+        'files': ['crst1.xml', 'crst2.xml', 'crst3.xml', 'crst4.xml', 'crst5.xml', 'crst6.xml', 'crst7.xml', 'crst8.xml', 'crst9.xml', 'crst10.xml', 'crst11.xml', 'crst12.xml', 'crst13.xml', 'crst14.xml', 'crst15.xml', 'crst16.xml', 'crst17.xml', 'crst18.xml'],
+        'first_issue_id': 1,
+        'last_issue_id': 17803
     }
 ]
 
@@ -66,8 +80,8 @@ importers = []
 
 # bl: first, load the configs
 for project_config in project_configs:
-    Options = namedtuple("Options", "user account repo token")
-    opts = Options(user=user, account=us, repo=project_config['repo'], token=token)
+    Options = namedtuple("Options", "user account repo token first_issue_id last_issue_id")
+    opts = Options(user=user, account=us, repo=project_config['repo'], token=token, first_issue_id=project_config['first_issue_id'], last_issue_id=project_config['last_issue_id'])
 
     jira_proj = project_config['jira_proj']
     project = Project(jira_proj)
@@ -104,4 +118,5 @@ for project_config in project_configs:
 
 # bl: once we've processed everything, then we can process comments so that everything will be linked properly
 for importer in importers:
-    importer.post_process_comments()
+    for issue_id in range(importer.options.first_issue_id-1, importer.options.last_issue_id):
+        importer.post_process_issue_comments(issue_id+1)
